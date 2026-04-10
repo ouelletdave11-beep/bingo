@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<meta name="theme-color" content="#302b63"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-title" content="Bingo"/>
+<title>🎱 Bingo</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:#0f0c29;overscroll-behavior:none}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+@keyframes popBig{0%{transform:scale(0.6);opacity:0}100%{transform:scale(1);opacity:1}}
+@keyframes spin{0%{transform:rotate(-20deg) scale(0.5)}100%{transform:rotate(0) scale(1)}}
+@keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(200%)}}
+button:active{transform:scale(0.95)!important}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useRef,useEffect,useCallback}=React;
+const FREE="FREE";
+const LETTERS=["B","I","N","G","O"];
+const LCOL={B:"#4fc3f7",I:"#81c784",N:"#f9d423",G:"#ff8a65",O:"#ce93d8"};
+const lc=l=>LCOL[l]||"#fff";
+function numToLetter(n){if(n<=15)return"B";if(n<=30)return"I";if(n<=45)return"N";if(n<=60)return"G";return"O";}
+
+const PATTERNS={
+  ligne1:{label:"1 Ligne",icon:"▬",desc:"Une ligne, colonne ou diagonale complète",
+    check(p,c){const m=(r,c)=>c[r][c]===FREE||p.has(c[r][c]);
+      for(let r=0;r<5;r++){const cl=[0,1,2,3,4].map(cc=>[r,cc]);if(cl.every(([r,c])=>m(r,c)))return{win:true,cells:cl};}
+      for(let c=0;c<5;c++){const cl=[0,1,2,3,4].map(r=>[r,c]);if(cl.every(([r,c])=>m(r,c)))return{win:true,cells:cl};}
+      const d1=[0,1,2,3,4].map(i=>[i,i]);if(d1.every(([r,c])=>m(r,c)))return{win:true,cells:d1};
+      const d2=[0,1,2,3,4].map(i=>[i,4-i]);if(d2.every(([r,c])=>m(r,c)))return{win:true,cells:d2};
+      return{win:false,cells:[]}}},
+  ligne2:{label:"2 Lignes",icon:"≡",desc:"Deux lignes/colonnes/diagonales complètes",
+    check(p,c){const m=(r,c)=>c[r][c]===FREE||p.has(c[r][c]);const done=[];
+      for(let r=0;r<5;r++){const cl=[0,1,2,3,4].map(cc=>[r,cc]);if(cl.every(([r,c])=>m(r,c)))done.push(cl);}
+      for(let c=0;c<5;c++){const cl=[0,1,2,3,4].map(r=>[r,c]);if(cl.every(([r,c])=>m(r,c)))done.push(cl);}
+      const d1=[0,1,2,3,4].map(i=>[i,i]);if(d1.every(([r,c])=>m(r,c)))done.push(d1);
+      const d2=[0,1,2,3,4].map(i=>[i,4-i]);if(d2.every(([r,c])=>m(r,c)))done.push(d2);
+      if(done.length>=2){const cells=[...new Map(done.slice(0,2).flat().map(([r,c])=>[r+","+c,[r,c]])).values()];return{win:true,cells};}
+      return{win:false,cells:[]}}},
+  tourFree:{label:"Tour du FREE",icon:"⊞",desc:"Les 8 cases autour de la case FREE centrale",
+    check(p,c){const m=(r,c)=>c[r][c]===FREE||p.has(c[r][c]);
+      const cells=[[1,1],[1,2],[1,3],[2,1],[2,3],[3,1],[3,2],[3,3]];
+      if(cells.every(([r,c])=>m(r,c)))return{win:true,cells:[...cells,[2,2]]};return{win:false,cells:[]}}},
+  Y:{label:"Y",icon:"Ψ",desc:"B+O rangée 1, I+G rangée 2, FREE, N rangées 4+5",
+    check(p,c){const m=(r,c)=>c[r][c]===FREE||p.has(c[r][c]);
+      const cells=[[0,0],[0,4],[1,1],[1,3],[2,2],[3,2],[4,2]];
+      if(cells.every(([r,c])=>m(r,c)))return{win:true,cells};return{win:false,cells:[]}}},
+  C:{label:"C",icon:"C",desc:"Colonne B + ligne du haut + ligne du bas",
+    check(p,c){const m=(r,c)=>c[r][c]===FREE||p.has(c[r][c]);
+      const colB=[0,1,2,3,4].map(r=>[r,0]);const top=[0,1,2,3,4].map(c=>[0,c]);const bot=[0,1,2,3,4].map(c=>[4,c]);
+      const cells=[...new Map([...colB,...top,...bot].map(([r,c])=>[r+","+c,[r,c]])).values()];
+      if(cells.every(([r,c])=>m(r,c)))return{win:true,cells};return{win:false,cells:[]}}},
+  pleine:{label:"Carte pleine",icon:"▦",desc:"Toutes les 25 cases",
+    check(p,c){const m=(r,c)=>c[r][c]===FREE||p.has(c[r][c]);
+      const cells=[];for(let r=0;r<5;r++)for(let c=0;c<5;c++)cells.push([r,c]);
+      if(cells.every(([r,c])=>m(r,c)))return{win:true,cells};return{win:false,cells:[]}}}
+};
+
+function countRemaining(p,card,key){
+  const m=(r,c)=>card[r][c]===FREE||p.has(card[r][c]);
+  const miss=cells=>cells.filter(([r,c])=>!m(r,c)).length;
+  if(key==="ligne1"){const lines=[];for(let r=0;r<5;r++)lines.push([0,1,2,3,4].map(c=>[r,c]));for(let c=0;c<5;c++)lines.push([0,1,2,3,4].map(r=>[r,c]));lines.push([0,1,2,3,4].map(i=>[i,i]));lines.push([0,1,2,3,4].map(i=>[i,4-i]));return Math.min(...lines.map(miss));}
+  if(key==="ligne2"){const lines=[];for(let r=0;r<5;r++)lines.push([0,1,2,3,4].map(c=>[r,c]));for(let c=0;c<5;c++)lines.push([0,1,2,3,4].map(r=>[r,c]));lines.push([0,1,2,3,4].map(i=>[i,i]));lines.push([0,1,2,3,4].map(i=>[i,4-i]));const s=lines.map(miss).sort((a,b)=>a-b);return s[0]+s[1];}
+  if(key==="tourFree")return miss([[1,1],[1,2],[1,3],[2,1],[2,3],[3,1],[3,2],[3,3]]);
+  if(key==="Y")return miss([[0,0],[0,4],[1,1],[1,3],[2,2],[3,2],[4,2]]);
+  if(key==="C"){const colB=[0,1,2,3,4].map(r=>[r,0]);const top=[0,1,2,3,4].map(c=>[0,c]);const bot=[0,1,2,3,4].map(c=>[4,c]);return miss([...new Map([...colB,...top,...bot].map(([r,c])=>[r+","+c,[r,c]])).values()]);}
+  if(key==="pleine"){let n=0;for(let r=0;r<5;r++)for(let c=0;c<5;c++)if(!m(r,c))n++;return n;}
+  return 0;
+}
+
+function emptyGrid(){return Array.from({length:5},(_,r)=>Array.from({length:5},(_,c)=>r===2&&c===2?FREE:""));}
+function btn(color,flex,small){return{flex:flex?1:undefined,width:flex?undefined:"100%",padding:small?"10px 14px":"14px 18px",background:color+"22",border:"1.5px solid "+color+"90",borderRadius:12,color,fontWeight:700,fontSize:small?14:15,cursor:"pointer",transition:"all 0.15s",letterSpacing:0.3};}
+
+async function callClaude(content,isImage,mode){
+  const promptSheet=`This image shows a bingo sheet with up to 9 cards. Extract ALL cards. Each is 5x5 with columns B I N G O. Center (row3,colN) is FREE. Each card may have an ID below it. Return ONLY valid JSON: {"cards":[{"id":"ID_OR_NULL","card":[[B1,B2,B3,B4,B5],[I1,I2,I3,I4,I5],[N1,N2,"FREE",N4,N5],[G1,G2,G3,G4,G5],[O1,O2,O3,O4,O5]]}]} card[col][row]. Values=integers or "FREE". Up to 9 cards.`;
+  const promptSingle=`This image shows a single bingo card. 5x5 grid columns B I N G O. Center is FREE. May have ID below. Return ONLY valid JSON: {"cards":[{"id":"ID_OR_NULL","card":[[B1,B2,B3,B4,B5],[I1,I2,I3,I4,I5],[N1,N2,"FREE",N4,N5],[G1,G2,G3,G4,G5],[O1,O2,O3,O4,O5]]}]} card[col][row]. Values=integers or "FREE".`;
+  const promptPdf=`This PDF contains bingo cards (up to 9). Each is 5x5 with columns B I N G O. Center (row3,colN) is FREE. Each card may have an ID number below it. Return ONLY valid JSON: {"cards":[{"id":"ID_OR_NULL","card":[[B1,B2,B3,B4,B5],[I1,I2,I3,I4,I5],[N1,N2,"FREE",N4,N5],[G1,G2,G3,G4,G5],[O1,O2,O3,O4,O5]]}]} card[col][row]. Values=integers or "FREE". Up to 9 cards.`;
+  const prompt=isImage?(mode==="sheet"?promptSheet:promptSingle):promptPdf;
+  const msgContent=isImage
+    ?[{type:"image",source:{type:"base64",media_type:content.mt,data:content.b64}},{type:"text",text:prompt}]
+    :[{type:"document",source:{type:"base64",media_type:"application/pdf",data:content.b64}},{type:"text",text:prompt}];
+  const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4000,messages:[{role:"user",content:msgContent}]})});
+  const data=await res.json();
+  if(data.error)throw new Error(data.error.message);
+  const text=(data.content||[]).map(b=>b.text||"").join("").replace(/```json|```/g,"").trim();
+  const parsed=JSON.parse(text);
+  if(!parsed.cards||!parsed.cards.length)throw new Error("Aucune carte trouvée.");
+  return parsed.cards.slice(0,9).map(item=>({
+    grid:Array.from({length:5},(_,r)=>Array.from({length:5},(_,c)=>item.card[c][r]==="FREE"?FREE:parseInt(item.card[c][r]))),
+    cardId:item.id||null
+  }));
+}
+
+function fileToB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result.split(",")[1]);r.onerror=rej;r.readAsDataURL(file);});}
+
+// ── Camera Scanner ────────────────────────────────────────────────
+function CameraScanner({mode,cardIndex,onCards,onCancel}){
+  const videoRef=useRef(),canvasRef=useRef(),streamRef=useRef();
+  const [ready,setReady]=useState(false),[scanning,setScanning]=useState(false),[err,setErr]=useState("");
+  useEffect(()=>{
+    let active=true;
+    navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920}}})
+    .then(s=>{if(!active){s.getTracks().forEach(t=>t.stop());return;}streamRef.current=s;if(videoRef.current)videoRef.current.srcObject=s;setReady(true);})
+    .catch(()=>setErr("Impossible d'accéder à la caméra. Vérifie les permissions."));
+    return()=>{active=false;streamRef.current?.getTracks().forEach(t=>t.stop());};
+  },[]);
+  const capture=useCallback(async()=>{
+    const v=videoRef.current,cv=canvasRef.current;if(!v||!cv)return;
+    cv.width=v.videoWidth||1280;cv.height=v.videoHeight||720;cv.getContext("2d").drawImage(v,0,0);
+    streamRef.current?.getTracks().forEach(t=>t.stop());setScanning(true);
+    try{const b64=cv.toDataURL("image/jpeg",0.92).split(",")[1];const cards=await callClaude({b64,mt:"image/jpeg"},true,mode);onCards(cards);}
+    catch(e){setErr("Erreur : "+e.message);setScanning(false);}
+  },[mode,onCards]);
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000",zIndex:300,display:"flex",flexDirection:"column"}}>
+      <div style={{position:"absolute",top:0,left:0,right:0,zIndex:10,padding:"12px 16px",background:"#00000080",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <button onClick={onCancel} style={{background:"none",border:"none",color:"#fff",fontSize:28,cursor:"pointer"}}>✕</button>
+        <div style={{color:"#f9d423",fontWeight:700,fontSize:13}}>{mode==="sheet"?"📷 Feuille complète":"📷 Carte "+(cardIndex+1)}</div>
+        <div style={{width:32}}/>
+      </div>
+      <video ref={videoRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+      <canvas ref={canvasRef} style={{display:"none"}}/>
+      {ready&&!scanning&&<div style={{position:"absolute",inset:0,pointerEvents:"none"}}>
+        <div style={{position:"absolute",top:"10%",left:"5%",right:"5%",bottom:"15%",border:"2px solid #f9d42360",borderRadius:12}}/>
+        <div style={{position:"absolute",bottom:"18%",left:0,right:0,textAlign:"center",color:"#f9d423",fontSize:13,fontWeight:600,textShadow:"0 1px 4px #000"}}>{mode==="sheet"?"Centre toute la feuille":"Centre la carte"}</div>
+      </div>}
+      {scanning&&<div style={{position:"absolute",inset:0,background:"#000000b0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
+        <div style={{fontSize:48}}>🔍</div><div style={{color:"#f9d423",fontSize:17,fontWeight:700}}>Analyse en cours…</div>
+      </div>}
+      {err&&<div style={{position:"absolute",bottom:110,left:20,right:20,background:"#ff4e5090",border:"1px solid #ff4e50",borderRadius:12,padding:16,textAlign:"center",color:"#fff",fontSize:14}}>
+        {err}<br/><button onClick={()=>setErr("")} style={{marginTop:8,background:"none",border:"1px solid #fff",borderRadius:8,color:"#fff",padding:"6px 16px",cursor:"pointer"}}>Réessayer</button>
+      </div>}
+      {ready&&!scanning&&!err&&<div style={{position:"absolute",bottom:0,left:0,right:0,padding:"20px 24px 44px",display:"flex",justifyContent:"center",background:"linear-gradient(transparent,#000000c0)"}}>
+        <button onClick={capture} style={{width:76,height:76,borderRadius:"50%",background:"#fff",border:"4px solid #f9d423",fontSize:30,cursor:"pointer",boxShadow:"0 4px 20px #00000060"}}>📸</button>
+      </div>}
+    </div>
+  );
+}
+
+// ── File Import (PDF or image) ─────────────────────────────────────
+function FileImport({onCards,onError}){
+  const [status,setStatus]=useState("idle"),[msg,setMsg]=useState("");
+  const fileRef=useRef();
+  const process=async(file)=>{
+    if(!file)return;
+    const isPdf=file.type==="application/pdf";
+    const isImg=file.type.startsWith("image/");
+    if(!isPdf&&!isImg){onError("Fichier PDF ou image requis.");return;}
+    setStatus("scanning");setMsg("L'IA analyse les cartes…");
+    try{
+      const b64=await fileToB64(file);
+      const cards=isPdf?await callClaude({b64},false,""):await callClaude({b64,mt:file.type},true,"sheet");
+      setStatus("done");setMsg(cards.length+" carte"+(cards.length>1?"s":"")+" trouvée"+(cards.length>1?"s":"")+" ✓");
+      onCards(cards);
+    }catch(e){setStatus("error");setMsg(e.message||"Erreur : "+e.message);onError(e.message);}
+  };
+  return(<div style={{display:"flex",flexDirection:"column",gap:10}}>
+    {/* Bouton principal — le plus fiable */}
+    <button
+      onClick={()=>fileRef.current?.click()}
+      disabled={status==="scanning"}
+      style={{...btn("#b388ff"),padding:"18px",fontSize:15,opacity:status==="scanning"?0.6:1}}>
+      📄 Choisir un fichier PDF ou image
+    </button>
+    <input
+      ref={fileRef}
+      type="file"
+      accept="application/pdf,image/jpeg,image/png,image/jpg,image/webp"
+      style={{display:"none"}}
+      onChange={e=>{if(e.target.files[0])process(e.target.files[0]);e.target.value="";}}
+    />
+    {status==="scanning"&&(
+      <div style={{background:"#4fc3f710",border:"1px solid #4fc3f7",borderRadius:12,padding:"14px 16px",textAlign:"center"}}>
+        <div style={{fontSize:24,marginBottom:6}}>🔍</div>
+        <div style={{color:"#4fc3f7",fontWeight:700,fontSize:13,animation:"pulse 1.2s infinite"}}>{msg}</div>
+        <div style={{marginTop:10,height:3,background:"#ffffff10",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:"60%",background:"linear-gradient(90deg,#4fc3f7,#fff)",borderRadius:2,animation:"slide 1.5s infinite"}}/></div>
+      </div>
+    )}
+    {status==="done"&&(
+      <div style={{background:"#60c0a010",border:"1px solid #60c0a0",borderRadius:12,padding:"12px 16px",textAlign:"center",color:"#60c0a0",fontWeight:700,fontSize:13}}>
+        ✅ {msg}
+        <div style={{marginTop:6}}><button onClick={()=>{setStatus("idle");setMsg("");}} style={{background:"none",border:"1px solid #60c0a060",borderRadius:8,color:"#60c0a0",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>Charger un autre fichier</button></div>
+      </div>
+    )}
+    {status==="error"&&(
+      <div style={{background:"#ff606010",border:"1px solid #ff6060",borderRadius:12,padding:"12px 16px",textAlign:"center",color:"#ff8080",fontSize:12}}>
+        ❌ {msg}
+        <div style={{marginTop:6}}><button onClick={()=>{setStatus("idle");setMsg("");}} style={{background:"none",border:"1px solid #ff606060",borderRadius:8,color:"#ff8080",fontSize:11,padding:"4px 12px",cursor:"pointer"}}>Réessayer</button></div>
+      </div>
+    )}
+  </div>);
+}
+
+// ── Manual Entry ──────────────────────────────────────────────────
+function CardEntry({cardIndex,onDone}){
+  const [grid,setGrid]=useState(emptyGrid());
+  const refs=useRef({});
+  useEffect(()=>{refs.current["0-0"]?.focus();},[cardIndex]);
+  const adv=(r,c)=>{let nr=r,nc=c;do{nc++;if(nc>4){nc=0;nr++;}if(nr>4)break;}while(nr===2&&nc===2);if(nr<=4)refs.current[nr+"-"+nc]?.focus();};
+  const ret=(r,c)=>{let nr=r,nc=c;do{nc--;if(nc<0){nc=4;nr--;}if(nr<0)break;}while(nr===2&&nc===2);if(nr>=0)refs.current[nr+"-"+nc]?.focus();};
+  const filled=grid.flat().filter(v=>v!==""&&v!==FREE).length;
+  const ok=filled===24;
+  return(<div>
+    <div style={{textAlign:"center",marginBottom:10}}>
+      <span style={{fontSize:13,color:"#a89cc8",letterSpacing:2}}>CARTE {cardIndex+1}</span>
+      <span style={{fontSize:11,color:"#5a4a80",marginLeft:10}}>{filled}/24</span>
+    </div>
+    <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:6}}>
+      {LETTERS.map(l=><div key={l} style={{width:52,textAlign:"center",fontWeight:900,fontSize:17,color:lc(l)}}>{l}</div>)}
+    </div>
+    {grid.map((row,r)=>(<div key={r} style={{display:"flex",justifyContent:"center",gap:6,marginBottom:5}}>
+      {row.map((val,c)=>{const isFree=r===2&&c===2;return(<div key={c}>
+        {isFree?<div style={{width:52,height:48,borderRadius:8,background:"#f9d42325",border:"1px solid #f9d42360",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:1}}><span style={{fontSize:18}}>⭐</span><span style={{fontSize:8,color:"#f9d423"}}>FREE</span></div>
+        :<input ref={el=>refs.current[r+"-"+c]=el} type="number" min="1" max="75" value={val} inputMode="numeric"
+          onChange={e=>{const v=e.target.value;if(v.length<=2){const n=grid.map(r=>[...r]);n[r][c]=v;setGrid(n);}if(v.length===2)setTimeout(()=>adv(r,c),0);}}
+          onKeyDown={e=>{if(e.key==="Enter"||e.key==="Tab"){e.preventDefault();adv(r,c);}if(e.key==="Backspace"&&e.target.value===""){e.preventDefault();ret(r,c);}}}
+          onFocus={e=>e.target.select()}
+          style={{width:52,height:48,textAlign:"center",background:val?lc(LETTERS[c])+"18":"#ffffff0d",border:"1.5px solid "+(val?lc(LETTERS[c])+"70":"#ffffff20"),borderRadius:8,color:"#fff",fontSize:16,fontWeight:700,outline:"none",MozAppearance:"textfield"}}
+        />}
+      </div>);})}
+    </div>))}
+    <div style={{marginTop:12,display:"flex",gap:8,alignItems:"center"}}>
+      <div style={{flex:1,height:4,background:"#ffffff10",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:(filled/24*100)+"%",background:"linear-gradient(90deg,#4fc3f7,#f9d423)",borderRadius:2,transition:"width 0.2s"}}/></div>
+      <button onClick={()=>onDone({grid:grid.map(row=>row.map(v=>v===FREE?FREE:parseInt(v))),cardId:null})} disabled={!ok}
+        style={{...btn(ok?"#f9d423":"#444",false,true),opacity:ok?1:0.5,cursor:ok?"pointer":"not-allowed"}}>✓ Valider</button>
+    </div>
+    {!ok&&<div style={{textAlign:"center",fontSize:11,color:"#5a4a80",marginTop:6}}>Entrée / Tab pour avancer</div>}
+  </div>);
+}
+
+// ── Mini Card ─────────────────────────────────────────────────────
+function MiniCard({cardObj,punched,result,remaining,onExpand,idx}){
+  const card=cardObj.grid,cardId=cardObj.cardId,sz=26;
+  const ws=new Set((result?.cells||[]).map(([r,c])=>r+","+c));
+  const rc=result?.win?"#f9d423":remaining===1?"#60c0a0":remaining<=3?"#f9d423":remaining<=5?"#ff8a65":"#7060a0";
+  return(<div onClick={onExpand} style={{background:result?.win?"#f9d42312":"#ffffff07",border:"1.5px solid "+(result?.win?"#f9d423":"#ffffff15"),borderRadius:11,padding:"7px 5px",cursor:"pointer",boxShadow:result?.win?"0 0 14px #f9d42340":"none",transition:"all 0.15s",position:"relative"}}>
+    {result?.win&&<div style={{position:"absolute",top:3,right:4,fontSize:9,color:"#f9d423",fontWeight:900}}>BINGO!</div>}
+    <div style={{display:"flex",justifyContent:"center",gap:2,marginBottom:2}}>
+      {LETTERS.map(l=><div key={l} style={{width:sz,textAlign:"center",fontSize:8,fontWeight:900,color:lc(l)}}>{l}</div>)}
+    </div>
+    {card.map((row,r)=>(<div key={r} style={{display:"flex",justifyContent:"center",gap:2,marginBottom:2}}>
+      {row.map((val,c)=>{const iF=val===FREE,mk=iF||punched.has(val),iW=ws.has(r+","+c);
+        return(<div key={c} style={{width:sz,height:sz,borderRadius:4,background:iW?"#f9d42345":mk?lc(LETTERS[c])+"35":"#ffffff08",border:"1px solid "+(iW?"#f9d423":mk?lc(LETTERS[c]):"#ffffff12"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:iF?8:9,fontWeight:700,color:mk||iW?"#fff":"#7060a0",position:"relative"}}>
+          {iF?"⭐":val}
+          {mk&&!iF&&<div style={{position:"absolute",width:15,height:15,borderRadius:"50%",background:lc(LETTERS[c])+"50",border:"2px solid "+lc(LETTERS[c]),top:"50%",left:"50%",transform:"translate(-50%,-50%)"}}/>}
+        </div>);
+      })}
+    </div>))}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:4,padding:"0 2px"}}>
+      <span style={{fontSize:9,color:"#5a4070"}}>{cardId?<span style={{fontWeight:700,color:"#f9d423",background:"#f9d42318",borderRadius:4,padding:"1px 4px"}}>#{cardId}</span>:"C."+(idx+1)}</span>
+      <span style={{fontSize:9,fontWeight:900,color:rc,background:rc+"18",borderRadius:5,padding:"1px 5px",border:"1px solid "+rc+"40"}}>{result?.win?"✓ BINGO":remaining+"🎱"}</span>
+    </div>
+  </div>);
+}
+
+// ── Big Card ──────────────────────────────────────────────────────
+function BigCard({cardObj,punched,result,onClose,idx}){
+  const card=cardObj.grid,cardId=cardObj.cardId;
+  const ws=new Set((result?.cells||[]).map(([r,c])=>r+","+c));
+  return(<div style={{position:"fixed",inset:0,background:"#000000d0",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} style={{background:"linear-gradient(135deg,#1a1640,#2a2456)",border:"2px solid "+(result?.win?"#f9d423":"#ffffff30"),borderRadius:20,padding:"18px 14px",maxWidth:320,width:"100%"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+        <div><span style={{fontSize:12,color:"#a89cc8",letterSpacing:2}}>CARTE {idx+1}</span>
+          {cardId&&<span style={{marginLeft:8,fontSize:11,fontWeight:700,color:"#f9d423",background:"#f9d42318",borderRadius:5,padding:"2px 7px"}}>#{cardId}</span>}
+        </div>
+        {result?.win&&<span style={{fontSize:13,color:"#f9d423",fontWeight:900}}>🎉 BINGO!</span>}
+        <button onClick={onClose} style={{background:"none",border:"none",color:"#8878aa",fontSize:22,cursor:"pointer",padding:0}}>✕</button>
+      </div>
+      <div style={{display:"flex",justifyContent:"center",gap:5,marginBottom:7}}>
+        {LETTERS.map(l=><div key={l} style={{width:50,textAlign:"center",fontWeight:900,fontSize:17,color:lc(l)}}>{l}</div>)}
+      </div>
+      {card.map((row,r)=>(<div key={r} style={{display:"flex",justifyContent:"center",gap:5,marginBottom:5}}>
+        {row.map((val,c)=>{const iF=val===FREE,mk=iF||punched.has(val),iW=ws.has(r+","+c);
+          return(<div key={c} style={{width:50,height:50,borderRadius:9,background:iW?"linear-gradient(135deg,#f9d42350,#ff4e5050)":mk?lc(LETTERS[c])+"30":"#ffffff0d",border:"1.5px solid "+(iW?"#f9d423":mk?lc(LETTERS[c]):"#ffffff20"),display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:1,fontSize:iF?8:15,fontWeight:900,color:mk||iW?"#fff":"#9080c0",position:"relative",boxShadow:iW?"0 0 12px #f9d42370":mk?"0 0 8px "+lc(LETTERS[c])+"50":"none",transition:"all 0.15s"}}>
+            {iF?(<><span style={{fontSize:15}}>⭐</span><span style={{fontSize:7,color:"#f9d423"}}>FREE</span></>):val}
+            {mk&&!iF&&<div style={{position:"absolute",width:28,height:28,borderRadius:"50%",background:lc(LETTERS[c])+"30",border:"2px solid "+lc(LETTERS[c]),top:"50%",left:"50%",transform:"translate(-50%,-50%)"}}/>}
+          </div>);
+        })}
+      </div>))}
+    </div>
+  </div>);
+}
+
+// ── Bingo Modal ───────────────────────────────────────────────────
+function BingoModal({newWinners,cardObjects,patternLabel,onClose}){
+  return(<div style={{position:"fixed",inset:0,background:"#000000c0",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:20}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} style={{background:"linear-gradient(135deg,#1a0e30,#2e1a50)",border:"2px solid #f9d423",borderRadius:24,padding:"32px 24px",maxWidth:360,width:"100%",textAlign:"center",boxShadow:"0 0 60px #f9d42360",animation:"popBig 0.4s cubic-bezier(0.34,1.56,0.64,1)"}}>
+      <div style={{fontSize:52,marginBottom:8}}>🎉</div>
+      <div style={{fontSize:40,fontWeight:900,letterSpacing:8,background:"linear-gradient(90deg,#f9d423,#ff4e50)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:6}}>BINGO !</div>
+      <div style={{fontSize:14,color:"#b388ff",letterSpacing:3,marginBottom:16,textTransform:"uppercase"}}>{patternLabel}</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,justifyContent:"center",marginBottom:20}}>
+        {newWinners.map(i=>{const cid=cardObjects[i]?.cardId;return(<div key={i} style={{background:"#f9d42320",border:"1.5px solid #f9d423",borderRadius:10,padding:"8px 16px",textAlign:"center"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#f9d423"}}>Carte {i+1}</div>
+          {cid&&<div style={{fontSize:18,fontWeight:900,color:"#fff",marginTop:2}}>#{cid}</div>}
+        </div>);})}
+      </div>
+      <button onClick={onClose} style={{...btn("#f9d423",false,false),padding:"13px 32px"}}>Continuer la partie</button>
+    </div>
+  </div>);
+}
+
+// ── Pattern Picker ────────────────────────────────────────────────
+function PatternPicker({selected,onSelect}){
+  return(<div>
+    <div style={{fontSize:11,color:"#a89cc8",letterSpacing:2,marginBottom:10,textAlign:"center"}}>TYPE DE BINGO</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+      {Object.entries(PATTERNS).map(([key,p])=>(<button key={key} onClick={()=>onSelect(key)} style={{padding:"12px 6px",borderRadius:10,cursor:"pointer",background:selected===key?"linear-gradient(135deg,#302b63,#4a3a80)":"#ffffff08",border:"1.5px solid "+(selected===key?"#f9d423":"#ffffff18"),color:selected===key?"#f9d423":"#8878aa",transition:"all 0.18s",boxShadow:selected===key?"0 0 10px #f9d42330":"none",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+        <span style={{fontSize:20,fontWeight:900}}>{p.icon}</span>
+        <span style={{fontSize:12,fontWeight:700}}>{p.label}</span>
+      </button>))}
+    </div>
+    {selected&&<div style={{marginTop:10,textAlign:"center",fontSize:11,color:"#7060a0",fontStyle:"italic"}}>{PATTERNS[selected].desc}</div>}
+  </div>);
+}
+
+// ── Main App ──────────────────────────────────────────────────────
+function App(){
+  const [cards,setCards]=useState(Array(9).fill(null));
+  const [punched,setPunched]=useState(new Set());
+  const [called,setCalled]=useState([]);
+  const [phase,setPhase]=useState("setup");
+  const [tab,setTab]=useState("camera");
+  const [idx,setIdx]=useState(0);
+  const [expanded,setExpanded]=useState(null);
+  const [val,setVal]=useState("");
+  const [pattern,setPattern]=useState("ligne1");
+  const [won,setWon]=useState(new Set());
+  const [winners,setWinners]=useState(null);
+  const [camera,setCamera]=useState(null);
+  const [scanMsg,setScanMsg]=useState("");
+  const [fileErr,setFileErr]=useState("");
+  const inputRef=useRef();
+  const ready=cards.filter(Boolean);
+
+  const shout=()=>{if(!window.speechSynthesis)return;window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance("BINGO!");u.lang="fr-CA";u.pitch=1.4;u.rate=0.85;u.volume=1;window.speechSynthesis.speak(u);};
+
+  const handleCamCards=useCallback((objs)=>{
+    const wasSheet=camera?.mode==="sheet",ci=camera?.cardIndex||0;
+    setCamera(null);
+    if(wasSheet){const n=Array(9).fill(null);objs.forEach((o,i)=>{if(i<9)n[i]=o;});setCards(n);setScanMsg(objs.length+" carte"+(objs.length>1?"s":"")+" lue"+(objs.length>1?"s":"")+" ✓");}
+    else{setCards(prev=>{const n=[...prev];n[ci]=objs[0];return n;});setScanMsg("Carte "+(ci+1)+" lue ✓");}
+  },[camera]);
+
+  const handleFileCards=(objs)=>{const n=Array(9).fill(null);objs.forEach((o,i)=>{if(i<9)n[i]=o;});setCards(n);setScanMsg(objs.length+" carte"+(objs.length>1?"s":"")+" lue"+(objs.length>1?"s":"")+" ✓");};
+  const handleManual=(obj)=>{const n=[...cards];n[idx]=obj;setCards(n);const ne=n.findIndex((c,i)=>i>idx&&!c);if(ne>=0)setIdx(ne);};
+
+  const enter=()=>{
+    const n=parseInt(val);if(!n||n<1||n>75)return;if(called.includes(n)){setVal("");return;}
+    setCalled(prev=>[n,...prev]);const np=new Set(punched);np.add(n);setPunched(np);setVal("");
+    setTimeout(()=>inputRef.current?.focus(),0);
+    if(!pattern)return;
+    const nw=[];cards.forEach((obj,i)=>{if(!obj||won.has(i))return;if(PATTERNS[pattern].check(np,obj.grid).win)nw.push(i);});
+    if(nw.length){const nwon=new Set(won);nw.forEach(i=>nwon.add(i));setWon(nwon);setWinners(nw);shout();}
+  };
+
+  const reset=()=>{setCards(Array(9).fill(null));setPunched(new Set());setCalled([]);setPhase("setup");setTab("camera");setIdx(0);setExpanded(null);setVal("");setWon(new Set());setWinners(null);setCamera(null);setScanMsg("");setFileErr("");};
+
+  const results=cards.map(obj=>obj&&pattern?PATTERNS[pattern].check(punched,obj.grid):{win:false,cells:[]});
+  const remaining=cards.map(obj=>obj&&pattern?countRemaining(punched,obj.grid,pattern):null);
+
+  return(<div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0f0c29 0%,#302b63 50%,#24243e 100%)",fontFamily:"Georgia,serif",color:"#fff",padding:"16px 10px 56px"}}>
+    <div style={{textAlign:"center",marginBottom:20}}>
+      <div style={{fontSize:11,letterSpacing:7,color:"#f0c040",textTransform:"uppercase",opacity:0.8}}>✦ Poinçonneuse de</div>
+      <div style={{fontSize:44,fontWeight:900,letterSpacing:10,background:"linear-gradient(90deg,#f9d423,#ff4e50)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",lineHeight:1}}>BINGO</div>
+      <div style={{fontSize:11,color:"#a89cc8",letterSpacing:2,marginTop:2}}>9 cartes · scan caméra · détection auto</div>
+    </div>
+
+    {phase==="setup"&&(<div style={{maxWidth:440,margin:"0 auto",display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{background:"#ffffff07",border:"1px solid #ffffff15",borderRadius:16,padding:"16px 14px"}}><PatternPicker selected={pattern} onSelect={setPattern}/></div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",background:"#ffffff08",borderRadius:12,padding:4}}>
+        {[["camera","📷 Caméra"],["fichier","📄 Fichier"],["manual","✏️ Manuel"]].map(([t,l])=>(
+          <button key={t} onClick={()=>{setTab(t);setScanMsg("");setFileErr("");}} style={{padding:"10px 6px",borderRadius:9,border:"none",background:tab===t?"linear-gradient(135deg,#302b63,#3d3570)":"transparent",color:tab===t?"#fff":"#6050a0",fontWeight:700,fontSize:12,cursor:"pointer",transition:"all 0.2s"}}>{l}</button>
+        ))}
+      </div>
+
+      {tab==="camera"&&(<div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <p style={{textAlign:"center",color:"#c8bfe0",fontSize:13,margin:0,lineHeight:1.7}}>Scanne ta feuille avec la caméra.<br/><span style={{color:"#7060a0",fontSize:11}}>L'IA lit toutes les cartes automatiquement.</span></p>
+        <button onClick={()=>setCamera({mode:"sheet",cardIndex:0})} style={{...btn("#f9d423"),padding:"16px 18px",fontSize:15}}>📷 Scanner la feuille complète (9 cartes)</button>
+        <div style={{background:"#ffffff07",border:"1px solid #ffffff15",borderRadius:14,padding:"12px 14px"}}>
+          <div style={{fontSize:11,color:"#a89cc8",letterSpacing:2,marginBottom:10,textAlign:"center"}}>OU CARTE PAR CARTE</div>
+          <div style={{display:"flex",gap:5,justifyContent:"center",marginBottom:12,flexWrap:"wrap"}}>
+            {Array.from({length:9},(_,i)=>(<div key={i} onClick={()=>setIdx(i)} style={{minWidth:32,height:32,borderRadius:7,cursor:"pointer",padding:"0 4px",background:cards[i]?"#60c0a025":i===idx?"#f9d42325":"#ffffff08",border:"1.5px solid "+(cards[i]?"#60c0a0":i===idx?"#f9d423":"#ffffff18"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:cards[i]?"#60c0a0":i===idx?"#f9d423":"#4a3870"}}>
+              {cards[i]?(cards[i].cardId?"#"+cards[i].cardId:"✓"):i+1}
+            </div>))}
+          </div>
+          <button onClick={()=>setCamera({mode:"single",cardIndex:idx})} style={btn("#b388ff")}>📷 Scanner la carte {idx+1}</button>
+        </div>
+        {scanMsg&&<div style={{textAlign:"center",color:"#60c0a0",fontSize:13,fontWeight:700}}>{scanMsg}</div>}
+      </div>)}
+
+      {tab==="fichier"&&(<div>
+        <p style={{textAlign:"center",color:"#c8bfe0",fontSize:13,margin:"0 0 12px",lineHeight:1.6}}>Glisse ou appuie pour charger ton PDF ou image.<br/><span style={{color:"#7060a0",fontSize:11}}>Numéros d'identification lus automatiquement.</span></p>
+        <FileImport onCards={handleFileCards} onError={setFileErr}/>
+        {fileErr&&<div style={{background:"#ff4e5018",border:"1px solid #ff4e50",borderRadius:8,padding:"10px 14px",color:"#ff8080",fontSize:12,textAlign:"center",marginTop:10}}>{fileErr}</div>}
+        {scanMsg&&<div style={{textAlign:"center",color:"#60c0a0",fontSize:13,fontWeight:700,marginTop:10}}>{scanMsg}</div>}
+      </div>)}
+
+      {tab==="manual"&&(<div>
+        <div style={{display:"flex",gap:5,justifyContent:"center",marginBottom:12,flexWrap:"wrap"}}>
+          {Array.from({length:9},(_,i)=>(<div key={i} onClick={()=>setIdx(i)} style={{width:32,height:32,borderRadius:7,cursor:"pointer",background:cards[i]?"#60c0a025":i===idx?"#f9d42325":"#ffffff08",border:"1.5px solid "+(cards[i]?"#60c0a0":i===idx?"#f9d423":"#ffffff18"),display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:cards[i]?"#60c0a0":i===idx?"#f9d423":"#4a3870"}}>{cards[i]?"✓":i+1}</div>))}
+        </div>
+        <div style={{background:"#ffffff07",border:"1px solid #ffffff15",borderRadius:16,padding:"18px 14px"}}><CardEntry key={idx} cardIndex={idx} onDone={handleManual}/></div>
+      </div>)}
+
+      {ready.length>0&&(<button onClick={()=>{setWon(new Set());setPhase("play");}} style={{...btn("#60c0a0"),padding:"16px 18px",fontSize:15}}>▶ Jouer avec {ready.length} carte{ready.length>1?"s":""}</button>)}
+    </div>)}
+
+    {phase==="play"&&(<div style={{maxWidth:600,margin:"0 auto"}}>
+      <div style={{textAlign:"center",marginBottom:10}}>
+        <span style={{background:"#f9d42318",border:"1px solid #f9d42360",borderRadius:20,padding:"4px 14px",fontSize:11,color:"#f9d423",letterSpacing:2,fontWeight:700}}>{PATTERNS[pattern]?.icon} {PATTERNS[pattern]?.label?.toUpperCase()}</span>
+      </div>
+      <div style={{background:"#ffffff07",border:"1px solid #ffffff15",borderRadius:14,padding:"12px 14px",marginBottom:12}}>
+        <div style={{fontSize:11,color:"#a89cc8",letterSpacing:2,marginBottom:8,textAlign:"center"}}>NUMÉRO APPELÉ</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <input ref={inputRef} type="number" min="1" max="75" value={val} inputMode="numeric"
+            onChange={e=>setVal(e.target.value.slice(0,2))} onKeyDown={e=>e.key==="Enter"&&enter()}
+            placeholder="1–75" autoFocus
+            style={{flex:1,height:54,background:"#ffffff10",border:"1.5px solid #ffffff30",borderRadius:10,color:"#fff",fontSize:26,fontWeight:900,textAlign:"center",outline:"none",MozAppearance:"textfield"}}
+          />
+          <button onClick={enter} style={{...btn("#f9d423",false,false),height:54,padding:"0 24px",fontSize:18}}>✓</button>
+        </div>
+        {called.length>0&&(<div style={{marginTop:9,display:"flex",flexWrap:"wrap",gap:4}}>
+          {called.slice(0,24).map((n,i)=>{const col=numToLetter(n);return(<div key={i} style={{width:34,height:34,borderRadius:6,background:lc(col)+"22",border:"1px solid "+lc(col)+"60",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,color:lc(col),opacity:Math.max(0.25,1-i*0.035)}}>{n}</div>);})}
+          {called.length>24&&<div style={{fontSize:10,color:"#5a4a80",alignSelf:"center"}}>+{called.length-24}</div>}
+        </div>)}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:12}}>
+        {cards.map((obj,i)=>(obj
+          ?<MiniCard key={i} cardObj={obj} punched={punched} result={results[i]} remaining={remaining[i]} onExpand={()=>setExpanded(i)} idx={i}/>
+          :<div key={i} style={{background:"#ffffff04",border:"1px dashed #ffffff12",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",minHeight:110,color:"#3a2860",fontSize:10,textAlign:"center",lineHeight:1.5}}>Carte {i+1}<br/>non saisie</div>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>setPhase("setup")} style={btn("#b388ff",true,true)}>✏️ Modifier</button>
+        <button onClick={reset} style={btn("#ff6060",true,true)}>🔄 Recommencer</button>
+      </div>
+    </div>)}
+
+    {expanded!==null&&cards[expanded]&&<BigCard cardObj={cards[expanded]} punched={punched} result={results[expanded]} onClose={()=>setExpanded(null)} idx={expanded}/>}
+    {winners&&<BingoModal newWinners={winners} cardObjects={cards} patternLabel={PATTERNS[pattern]?.label} onClose={()=>setWinners(null)}/>}
+    {camera&&<CameraScanner mode={camera.mode} cardIndex={camera.cardIndex} onCards={handleCamCards} onCancel={()=>setCamera(null)}/>}
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
